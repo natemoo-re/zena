@@ -2705,6 +2705,7 @@ dependencies = [
  "clap",
  "directories",
  "glob",
+ "libc",
  "serde_json",
  "walkdir",
  "wasmtime",

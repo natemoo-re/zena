@@ -87,7 +87,7 @@ fn sample_wasm(engine: &Engine, module: &Module, invoke: &str, _debug: bool) -> 
         .stderr(stderr_pipe)
         .args(&["bench-variant".to_string()])
         .build_p1();
-    let mut store = Store::new(engine, MyState { wasi });
+    let mut store = Store::new(engine, MyState { wasi, clayterm: None });
     reserve_gc_heap(engine, &mut store)?;
 
     let instance = linker.instantiate(&mut store, module)?;

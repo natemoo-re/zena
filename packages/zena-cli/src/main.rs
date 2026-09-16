@@ -13,6 +13,7 @@ use wasmtime_wasi::{DirPerms, FilePerms};
 
 mod bench;
 mod process;
+mod tty;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -183,6 +184,7 @@ enum Commands {
 
 struct MyState {
     wasi: WasiP1Ctx,
+    clayterm: Option<tty::ClayTerm>,
 }
 
 /// The -O flag's value, readable from the cache-key and guest-env sites
@@ -739,7 +741,7 @@ fn compile_to_cache(
         }
         let wasi = wasi_builder.build_p1();
 
-        let mut store = Store::new(&engine, MyState { wasi });
+        let mut store = Store::new(&engine, MyState { wasi, clayterm: None });
         reserve_gc_heap(&engine, &mut store)?;
 
         let compiler_instance = linker.instantiate(&mut store, &compiler_module)?;
@@ -865,6 +867,7 @@ fn run_wasm(file: &str, invoke: &str, _verbose: bool, dirs: &[String], args: &[S
     let mut linker: Linker<MyState> = Linker::new(&engine);
     p1::add_to_linker_sync(&mut linker, |state| &mut state.wasi)?;
     add_stack_trace_helpers(&mut linker, &engine, &module)?;
+    tty::add_tty_imports(&engine, &mut linker)?;
 
     let mut wasi_builder = WasiCtxBuilder::new();
     wasi_builder.inherit_stdio().inherit_env();
@@ -907,8 +910,24 @@ fn run_wasm(file: &str, invoke: &str, _verbose: bool, dirs: &[String], args: &[S
 
     let wasi = wasi_builder.build_p1();
 
-    let mut store = Store::new(&engine, MyState { wasi });
+    let mut store = Store::new(&engine, MyState { wasi, clayterm: None });
     reserve_gc_heap(&engine, &mut store)?;
+
+    // If ZENA_CLAYTERM_WASM is set, load clayterm and expose it to the guest.
+    // The initial dimensions come from ZENA_CLAYTERM_SIZE (e.g. "220x50") or
+    // the current terminal size.
+    if let Ok(clay_path) = std::env::var("ZENA_CLAYTERM_WASM") {
+        let (w, h) = if let Ok(sz) = std::env::var("ZENA_CLAYTERM_SIZE") {
+            let parts: Vec<&str> = sz.splitn(2, 'x').collect();
+            let w = parts.first().and_then(|s| s.parse().ok()).unwrap_or(80);
+            let h = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(24);
+            (w, h)
+        } else {
+            tty::terminal_size_i32()
+        };
+        let ct = tty::load_clayterm(&engine, &mut linker, &mut store, &clay_path, w, h)?;
+        store.data_mut().clayterm = Some(ct);
+    }
 
     let instance = match linker.instantiate(&mut store, &module) {
         Ok(inst) => inst,
@@ -1303,7 +1322,7 @@ fn run_internal_tool(
         .preopened_dir(&repo_root, ".", DirPerms::all(), FilePerms::all())?
         .preopened_dir("/", "/", DirPerms::all(), FilePerms::all())?
         .build_p1();
-    let mut store = Store::new(&engine, MyState { wasi });
+    let mut store = Store::new(&engine, MyState { wasi, clayterm: None });
     reserve_gc_heap(&engine, &mut store)?;
 
     let instance = linker.instantiate(&mut store, &module)?;
@@ -1381,7 +1400,7 @@ fn run_single_test(
         .preopened_dir(&tmp_host_dir, "/tmp", DirPerms::all(), FilePerms::all())?
         .build_p1();
 
-    let mut store = Store::new(engine, MyState { wasi });
+    let mut store = Store::new(engine, MyState { wasi, clayterm: None });
 
     let instance = match linker.instantiate(&mut store, &module) {
         Ok(inst) => inst,
