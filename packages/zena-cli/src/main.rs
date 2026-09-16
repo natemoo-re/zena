@@ -492,9 +492,16 @@ fn compile_to_cache(
 
     // Compute deterministic cache path based on absolute file source
     let abs_path = std::fs::canonicalize(file).context("Failed to resolve file path")?;
-    let rel_path = abs_path
-        .strip_prefix(&repo_root)
-        .context("File must be inside the Zena repository for now")?;
+    // Files outside the repo are passed to the compiler by absolute path and
+    // their parent directory is preopened under that same absolute guest path,
+    // matching how the cache directory is exposed.
+    let (file_arg_str, external_src_dir) = match abs_path.strip_prefix(&repo_root) {
+        Ok(rel) => (rel.to_string_lossy().into_owned(), None),
+        Err(_) => {
+            let src_dir = abs_path.parent().unwrap_or(abs_path.as_path()).to_path_buf();
+            (abs_path.to_string_lossy().into_owned(), Some(src_dir))
+        }
+    };
 
     // Create an absolute path into the cache directory
     let cache_dir = if std::env::var("ZENA_PROJECT_CACHE").is_ok()
@@ -638,7 +645,7 @@ fn compile_to_cache(
 
     let stdlib_dir = repo_root.join("packages/stdlib/zena");
 
-    let file_arg = rel_path.to_string_lossy().to_string();
+    let file_arg = file_arg_str;
 
     // Direct compilation output to a temporary file, then atomically rename it
     // into place. This prevents concurrent readers from observing a partial or
@@ -713,19 +720,24 @@ fn compile_to_cache(
         wasi_builder.env("ZENA_OPT_LEVEL", level);
     }
 
-        let wasi = wasi_builder
+        wasi_builder
             .inherit_env()
             .args(&compiler_args)
-            .preopened_dir(repo_root, ".", DirPerms::all(), FilePerms::all())?
-            .preopened_dir(stdlib_dir, "/stdlib", DirPerms::all(), FilePerms::all())?
+            .preopened_dir(&repo_root, ".", DirPerms::all(), FilePerms::all())?
+            .preopened_dir(&stdlib_dir, "/stdlib", DirPerms::all(), FilePerms::all())?
             // Give the guest write access directly to the user's absolute cache directory
             .preopened_dir(
                 &cache_dir,
                 cache_dir.to_str().unwrap(),
                 DirPerms::all(),
                 FilePerms::all(),
-            )?
-            .build_p1();
+            )?;
+        // For source files outside the repo, expose their directory so the
+        // compiler can read them via the absolute guest path.
+        if let Some(ref dir) = external_src_dir {
+            wasi_builder.preopened_dir(dir, dir.to_str().unwrap(), DirPerms::all(), FilePerms::all())?;
+        }
+        let wasi = wasi_builder.build_p1();
 
         let mut store = Store::new(&engine, MyState { wasi });
         reserve_gc_heap(&engine, &mut store)?;
