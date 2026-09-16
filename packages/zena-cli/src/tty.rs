@@ -358,6 +358,11 @@ fn terminal_size() -> (i32, i32) {
     (80, 24)
 }
 
+/// Called by the host after guest execution to ensure terminal is always restored.
+pub fn disable_raw_mode_if_needed() -> Result<()> {
+    disable_raw_mode()
+}
+
 fn enable_raw_mode() -> Result<()> {
     #[cfg(unix)]
     unsafe {

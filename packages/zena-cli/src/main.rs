@@ -946,7 +946,14 @@ fn run_wasm(file: &str, invoke: &str, _verbose: bool, dirs: &[String], args: &[S
     let results_count = main_export.ty(&store).results().len();
     let mut results = vec![Val::I32(0); results_count];
 
-    if let Err(e) = main_export.call(&mut store, &[], &mut results) {
+    let call_result = main_export.call(&mut store, &[], &mut results);
+
+    // Always restore the terminal before returning, regardless of success/failure.
+    if store.data().clayterm.is_some() {
+        let _ = tty::disable_raw_mode_if_needed();
+    }
+
+    if let Err(e) = call_result {
         if let Some(bt) = e.downcast_ref::<wasmtime::WasmBacktrace>() {
             eprintln!("Wasm Backtrace:\n{}", bt);
         }
