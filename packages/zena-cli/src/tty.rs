@@ -105,7 +105,7 @@ pub fn load_clayterm(
     }
 
     clay_instance
-        .get_typed_func::<(i32, i32), ()>(&mut *store, "input_init")?
+        .get_typed_func::<(i32, i32), i32>(&mut *store, "input_init")?
         .call(&mut *store, (input_ptr, 0))?;
 
     Ok(ClayTerm { instance: clay_instance, memory: clay_mem, state_ptr, ops_buf, input_ptr })
@@ -145,8 +145,8 @@ pub fn add_tty_imports(engine: &Engine, linker: &mut Linker<MyState>) -> Result<
                 .copy_from_slice(&ops_bytes);
 
             clay_inst
-                .get_typed_func::<(i32, i32, i32, i32, i32, f64), ()>(&mut caller, "reduce")?
-                .call(&mut caller, (state_ptr, clay_ops_buf, ops_len as i32, mode, row, dt))?;
+                .get_typed_func::<(i32, i32, i32, i32, i32, f32), ()>(&mut caller, "reduce")?
+                .call(&mut caller, (state_ptr, clay_ops_buf, ops_len as i32, mode, row, dt as f32))?;
             Ok(())
         },
     )?;
@@ -215,8 +215,8 @@ pub fn add_tty_imports(engine: &Engine, linker: &mut Linker<MyState>) -> Result<
                 .copy_from_slice(&bytes);
 
             clay_inst
-                .get_typed_func::<(i32, i32, i32), ()>(&mut caller, "input_scan")?
-                .call(&mut caller, (input_ptr, staging as i32, buf_len as i32))?;
+                .get_typed_func::<(i32, i32, i32, f64), i32>(&mut caller, "input_scan")?
+                .call(&mut caller, (input_ptr, staging as i32, buf_len as i32, 0.0_f64))?;
             Ok(())
         },
     )?;
@@ -281,9 +281,10 @@ pub fn add_tty_imports(engine: &Engine, linker: &mut Linker<MyState>) -> Result<
                 (ct.instance, ct.input_ptr)
             };
             let d = clay_inst
-                .get_typed_func::<i32, f64>(&mut caller, "input_delay")?
+                .get_typed_func::<i32, i32>(&mut caller, "input_delay")?
                 .call(&mut caller, input_ptr)?;
-            results[0] = Val::F64(d.to_bits());
+            // Convert milliseconds (i32) to seconds (f64) for the Zena caller.
+            results[0] = Val::F64((d as f64 / 1000.0).to_bits());
             Ok(())
         },
     )?;
